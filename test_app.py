@@ -129,3 +129,53 @@ def test_delete():
 def test_unknown_link():
     assert client.get("/links/missing").status_code == 404
     assert client.get("/zzzzzz", follow_redirects=False).status_code == 404
+
+
+def test_list_links():
+    first = create_link("https://example.com/one").json()
+    second = create_link("https://example.com/two").json()
+
+    response = client.get("/links")
+
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()} == {first["id"], second["id"]}
+
+
+def test_strips_url():
+    response = create_link("  https://example.com/path  ")
+
+    assert response.status_code == 201
+    assert response.json()["url"] == "https://example.com/path"
+
+
+def test_duplicate_keeps_name():
+    first = create_link("https://example.com/same", "Первое")
+    second = create_link("https://example.com/same", "Второе")
+
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["name"] == "Первое"
+
+
+def test_trailing_slash_is_different():
+    first = create_link("https://example.com/slash")
+    second = create_link("https://example.com/slash/")
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+
+
+def test_name_too_long():
+    created = create_link("https://example.com/long").json()
+
+    response = client.patch(f"/links/{created['id']}", json={"name": "я" * 101})
+
+    assert response.status_code == 400
+
+
+def test_second_delete():
+    created = create_link("https://example.com/gone").json()
+
+    assert client.delete(f"/links/{created['id']}").status_code == 204
+    assert client.delete(f"/links/{created['id']}").status_code == 404
