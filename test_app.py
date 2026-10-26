@@ -1,9 +1,18 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app_final import app, reset_storage
 
 client = TestClient(app)
+
+
+def create_link(url, name=None):
+    payload = {"url": url}
+    if name is not None:
+        payload["name"] = name
+    return client.post("/links", json=payload)
 
 
 @pytest.fixture(autouse=True)
@@ -47,3 +56,76 @@ def test_info(monkeypatch):
         "app_name": "Тестовый сервис",
         "author": "Анна",
     }
+
+
+def test_create_link(monkeypatch):
+    monkeypatch.setenv("BASE_URL", "http://127.0.0.1:8000")
+
+    response = create_link("https://www.hse.ru", "Расписание")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert re.fullmatch(r"[a-z0-9]{6}", body["id"])
+    assert body["name"] == "Расписание"
+    assert body["url"] == "https://www.hse.ru"
+    assert body["short_url"] == f"http://127.0.0.1:8000/{body['id']}"
+
+
+def test_read_link():
+    created = create_link("https://www.hse.ru").json()
+
+    response = client.get(f"/links/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == created
+
+
+def test_duplicate_url():
+    first = create_link("https://www.hse.ru")
+    second = create_link("https://www.hse.ru", "Другое имя")
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+
+
+def test_bad_url():
+    response = create_link("www.hse.ru")
+
+    assert response.status_code == 400
+
+
+def test_redirect():
+    created = create_link("https://www.hse.ru").json()
+
+    response = client.get(f"/{created['id']}", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://www.hse.ru"
+
+
+def test_rename():
+    created = create_link("https://www.hse.ru", "Старое").json()
+
+    response = client.patch(f"/links/{created['id']}", json={"name": "Новое"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["id"]
+    assert body["name"] == "Новое"
+    assert body["url"] == created["url"]
+
+
+def test_delete():
+    created = create_link("https://www.hse.ru").json()
+
+    response = client.delete(f"/links/{created['id']}")
+
+    assert response.status_code == 204
+    assert client.get(f"/links/{created['id']}").status_code == 404
+    assert client.get(f"/{created['id']}", follow_redirects=False).status_code == 404
+
+
+def test_unknown_link():
+    assert client.get("/links/missing").status_code == 404
+    assert client.get("/zzzzzz", follow_redirects=False).status_code == 404
